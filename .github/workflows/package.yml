@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'npm'
 
       # 3. 安装 Rust 环境 (Tauri 后端编译必需)
@@ -43,6 +43,6 @@ jobs:
           # 核心配置：使用通配符精准匹配你生成的两个文件
           # 假设这两个文件输出在项目根目录，如果是 dist 目录，请改为 dist/InfoMagic*
           path: |
-            InfoMagic_*.zip
-            InfoMagic_*.exe
+            output/InfoMagic_*.zip
+            output/InfoMagic_*.exe
           retention-days: 7

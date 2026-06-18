@@ -30,7 +30,14 @@ InfoMagic 是一款基于 AI 的信息图表生成工具，可以帮助用户制
 
 ## 联系作者
 
-https://github.com/iotate/infomagic
+GitHub: https://github.com/iotate/infomagic
+
+扫码关注获取更多内容（微信/小红书/抖音 - 舟游AI国）：
+
+| 微信 | 小红书 | 抖音 |
+|------|--------|------|
+| ![微信](connect/wechat.jpg) | ![小红书](connect/redbook.jpg) | ![抖音](connect/douyin.png) |
+
 
 
 ## 安装
