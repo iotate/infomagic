@@ -1,0 +1,43 @@
+[package]
+name = "infomagic"
+version = "0.1.0"
+description = "InfoMagic - 信息图表生成器"
+authors = ["iotate"]
+edition = "2021"
+
+[lib]
+name = "infomagic_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "fs"] }
+base64 = "0.22"
+regex = "1"
+lopdf = { version = "0.34", features = ["embed_image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# 减少符号导出以避免 "export ordinal too large" 错误
+[profile.release]
+lto = true
+codegen-units = 1
+
+[profile.dev]
+incremental = true
+# 为 debug 模式添加大地址感知，解决开发环境下的 ordinal 报错
+codegen-units = 1 
+
+
