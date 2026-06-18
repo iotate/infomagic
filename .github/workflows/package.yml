@@ -46,3 +46,15 @@ jobs:
             output/InfoMagic_*.zip
             output/InfoMagic_*.exe
           retention-days: 7
+      
+      # 7. 自动创建 GitHub Release
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') # 核心条件：只有打标签时才触发
+        with:
+          files: |
+            output/InfoMagic_*.zip
+            output/InfoMagic_*.exe
+          generate_release_notes: true # 自动生成基于 commit 的更新日志
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 必须提供权限令牌
