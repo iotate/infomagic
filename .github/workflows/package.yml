@@ -1,0 +1,48 @@
+name: InfoMagic Custom Package Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-package:
+    # 因为产物包含 exe，限制在 Windows 环境下运行
+    runs-on: windows-latest
+
+    steps:
+      # 1. 检出代码仓库
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 安装 Node.js 环境
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      # 3. 安装 Rust 环境 (Tauri 后端编译必需)
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # 4. 安装前端项目依赖
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 5. 执行自定义打包脚本
+      - name: Run Custom Package Script
+        run: npm run package
+
+      # 6. 上传构建产物
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfoMagic-Windows-Build
+          # 核心配置：使用通配符精准匹配你生成的两个文件
+          # 假设这两个文件输出在项目根目录，如果是 dist 目录，请改为 dist/InfoMagic*
+          path: |
+            InfoMagic_*.zip
+            InfoMagic_*.exe
+          retention-days: 7
