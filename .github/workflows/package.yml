@@ -10,6 +10,9 @@ jobs:
   build-package:
     # 因为产物包含 exe，限制在 Windows 环境下运行
     runs-on: windows-latest
+    # ✅ 必须添加此权限，否则无法创建 Release
+    permissions:
+      contents: write 
 
     steps:
       # 1. 检出代码仓库
