@@ -3,6 +3,8 @@ name: InfoMagic Custom Package Build
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - 'v*' # 监听标签推送
   pull_request:
     branches: [ "main" ]
 
@@ -52,8 +54,8 @@ jobs:
       
       # 7. 自动创建 GitHub Release
       - name: Create GitHub Release
+        if: github.ref_type == 'tag' # 只有标签触发时执行
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') # 核心条件：只有打标签时才触发
         with:
           files: |
             output/InfoMagic_*.zip
