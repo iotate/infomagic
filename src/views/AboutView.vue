@@ -68,9 +68,9 @@ async function openGithub() {
 
 <style scoped>
 .about-page {
-  max-width: 800px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 24px 16px;
 }
 
 .about-header {

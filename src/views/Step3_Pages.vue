@@ -101,9 +101,13 @@ const exporting = ref(false)
 const templates = ref<TemplateInfo[]>([])
 const styles = ref<StyleInfo[]>([])
 const imageSizes = ref<ImageSize[]>([])
-const selectedTemplate = ref('')
+const selectedTemplate = ref('none')
 const selectedStyle = ref('')
 const selectedSizeIndex = ref(3) // 默认 4:3，会从 prompt.md 读取
+
+// 版式分配和风格遵循强度
+const layoutAssignments = ref<Record<number, string>>({})
+const adherenceLevel = ref<'loose' | 'balanced' | 'strict'>('strict')
 
 const projectId = route.params.id as string
 
@@ -223,7 +227,7 @@ async function saveProjectSettings() {
   try {
     await invoke('update_project_settings', {
       name: projectId,
-      template: selectedTemplate.value || null,
+      template: selectedTemplate.value === 'none' ? null : selectedTemplate.value || null,
       style: selectedStyle.value || null,
       sizeIndex: selectedSizeIndex.value
     })
@@ -235,9 +239,7 @@ async function saveProjectSettings() {
 async function loadTemplates() {
   try {
     templates.value = await invoke<TemplateInfo[]>('list_templates')
-    if (templates.value.length > 0 && !selectedTemplate.value) {
-      selectedTemplate.value = templates.value[0].name
-    }
+    // 默认保持 'none'，如果项目有保存的模板则会在 loadPromptSize 中设置
   } catch (e) {
     console.error('加载模板失败', e)
     templates.value = []
@@ -337,14 +339,17 @@ const hasGeneratedImages = computed(() => {
 // 生成当前图片
 async function generateCurrentImage() {
   if (!selectedPage.value) return
-  
-  if (!selectedTemplate.value || !selectedStyle.value) {
-    alert('请先选择模板和风格')
+
+  if (!selectedStyle.value) {
+    alert('请先选择风格')
     return
   }
   
   const config = await invoke<any>('load_config')
   const size = imageSizes.value[selectedSizeIndex.value] || { width: 1920, height: 1080 }
+  
+  // 获取当前页面的版式分配
+  const currentLayout = layoutAssignments.value[selectedPage.value.page_num] || null
   
   // 清理已有图片和状态
   selectedPage.value.image_path = undefined
@@ -353,13 +358,15 @@ async function generateCurrentImage() {
   try {
     // 返回值是图片路径字符串
     const imagePath = await invoke<string>('generate_image', { 
-      projectName: projectId, 
+      projectName: projectId,
       pageNum: selectedPage.value.page_num,
-      template: selectedTemplate.value || null,  // 确保空值传为 null
-      style: selectedStyle.value || null,        // 确保空值传为 null
+      template: selectedTemplate.value === 'none' ? null : selectedTemplate.value || null,
+      style: selectedStyle.value || null,
       width: size.width,
       height: size.height,
-      config: config.img
+      config: config.img,
+      layoutFamily: currentLayout,
+      adherenceLevel: adherenceLevel.value
     })
     selectedPage.value.image_status = 'done'
     // 更新图片路径以立即刷新显示
@@ -377,13 +384,25 @@ async function generateCurrentImage() {
 
 // 批量生成图片
 async function generateAllImages() {
-  if (!selectedTemplate.value || !selectedStyle.value) {
-    alert('请先选择模板和风格')
+  if (!selectedStyle.value) {
+    alert('请先选择风格')
     return
   }
   
   const config = await invoke<any>('load_config')
   const size = imageSizes.value[selectedSizeIndex.value] || { width: 1920, height: 1080 }
+  
+  // 获取版式分配
+  try {
+    const assignments = await invoke<Record<number, string>>('get_layout_assignments', {
+      projectName: projectId,
+      styleName: selectedStyle.value,
+      pageCount: pages.value.length
+    })
+    layoutAssignments.value = assignments
+  } catch (e) {
+    console.error('获取版式分配失败:', e)
+  }
   
   generatingAll.value = true
   generatingProgress.value = 0
@@ -401,15 +420,20 @@ async function generateAllImages() {
   for (let i = 0; i < pages.value.length; i++) {
     pages.value[i].image_status = 'generating'
     try {
+      // 获取当前页面的版式分配
+      const currentLayout = layoutAssignments.value[pages.value[i].page_num] || null
+      
       // 返回值是图片路径字符串
       const imagePath = await invoke<string>('generate_image', { 
-        projectName: projectId, 
+        projectName: projectId,
         pageNum: pages.value[i].page_num,
-        template: selectedTemplate.value || null,  // 确保空值传为 null
-        style: selectedStyle.value || null,        // 确保空值传为 null
+        template: selectedTemplate.value === 'none' ? null : selectedTemplate.value || null,
+        style: selectedStyle.value || null,
         width: size.width,
         height: size.height,
-        config: config.img
+        config: config.img,
+        layoutFamily: currentLayout,
+        adherenceLevel: adherenceLevel.value
       })
       pages.value[i].image_status = 'done'
       // 更新图片路径以立即刷新显示
@@ -498,25 +522,29 @@ function goBack() {
     <!-- 工具栏 -->
     <div class="toolbar">
       <a-space>
+        <span class="toolbar-label">模板</span>
         <a-select v-model:value="selectedTemplate" style="width: 120px" size="small" placeholder="选择模板">
+          <a-select-option value="none">不使用</a-select-option>
           <a-select-option v-for="t in templates" :key="t.name" :value="t.name">{{ t.name }}</a-select-option>
         </a-select>
-        <a-select v-model:value="selectedStyle" style="width: 120px" size="small" placeholder="选择风格">
+        <span class="toolbar-label">风格</span>
+        <a-select v-model:value="selectedStyle" style="width: 140px" size="small" placeholder="选择风格">
           <a-select-option v-for="s in styles" :key="s.name" :value="s.name">{{ s.name }}</a-select-option>
         </a-select>
-        <a-select v-model:value="selectedSizeIndex" style="width: 150px" size="small" placeholder="选择尺寸">
-          <a-select-option v-for="(size, index) in imageSizes" :key="index" :value="index">{{ size.name }} ({{ size.width }}×{{ size.height }})</a-select-option>
+        <span class="toolbar-label">尺寸</span>
+        <a-select v-model:value="selectedSizeIndex" style="width: 100px" size="small" placeholder="选择尺寸">
+          <a-select-option v-for="(size, index) in imageSizes" :key="index" :value="index">{{ size.name }}</a-select-option>
         </a-select>
         <a-divider type="vertical" />
-        <a-button @click="saveAllPages" :loading="saving">保存全部</a-button>
+        <a-button @click="saveAllPages" :loading="saving">保存</a-button>
         <a-button type="primary" @click="generateAllImages" :loading="generatingAll">批量生成</a-button>
         <a-button @click="generateCurrentImage" :loading="selectedPage?.image_status === 'generating'">生成当前</a-button>
         <a-tooltip :title="!hasGeneratedImages ? '请先批量生成或生成当前图片' : ''">
-          <a-button @click="exportPdf" :disabled="!hasGeneratedImages" :loading="exporting">导出PDF</a-button>
+          <a-button @click="exportPdf" :disabled="!hasGeneratedImages" :loading="exporting">导出</a-button>
         </a-tooltip>
       </a-space>
       <a-space>
-        <a-button @click="goBack">← 返回大纲</a-button>
+        <a-button @click="goBack">← 返回</a-button>
       </a-space>
     </div>
 
@@ -610,8 +638,9 @@ function goBack() {
 
 <style scoped>
 .pages-page {
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
+  padding: 0 16px;
 }
 
 .page-header {
@@ -636,6 +665,11 @@ function goBack() {
   border: 1px solid var(--border-color);
 }
 
+.toolbar-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .progress-bar {
   margin-bottom: 16px;
   padding: 10px 16px;
@@ -655,7 +689,7 @@ function goBack() {
 
 .editor-layout {
   display: grid;
-  grid-template-columns: 1fr 360px;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
   min-height: 450px;
 }

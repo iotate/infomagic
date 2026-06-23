@@ -152,6 +152,7 @@ function scrollToTop() {
 .log-page {
   max-width: 1200px;
   margin: 0 auto;
+  padding: 0 16px;
 }
 
 .page-header {

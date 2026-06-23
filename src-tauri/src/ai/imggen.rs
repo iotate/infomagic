@@ -89,8 +89,8 @@ pub async fn generate_all_images(
         let page_type = determine_page_type(&page_content, page_num, total_pages);
         let template_image = get_template_image(&cwd, &options.template, page_type).await;
         
-        // Build prompt
-        let prompt = build_image_prompt(&page_content, style_content.as_deref(), page_type);
+        // Build prompt (without style guide for backward compatibility)
+        let prompt = build_image_prompt(&page_content, style_content.as_deref(), page_type, None, None, false);
         
         // Generate image
         let output_path = project_dir.join(format!("page-{}.png", page_num));
@@ -150,7 +150,7 @@ pub async fn regenerate_image(
     
     let prompt = custom_prompt.unwrap_or_else(|| {
         let page_type = determine_page_type(&page_content, page_num, 0);
-        build_image_prompt(&page_content, None, page_type)
+        build_image_prompt(&page_content, None, page_type, None, None, false)
     });
     
     // Use two-digit format for output path
@@ -174,6 +174,9 @@ pub async fn generate_image(
     width: u32,
     height: u32,
     config: ImageConfig,
+    layout_family: Option<String>,
+    adherence_level: Option<String>,
+    llm_config: Option<crate::config::ApiConfig>,
 ) -> Result<String, String> {
     let cwd_path = cwd.inner().clone();
     let project_dir = cwd.join("projects").join(&project_name);
@@ -184,16 +187,18 @@ pub async fn generate_image(
         return Err(format!("Page {} not found", page_num));
     }
     
-    // Get style content if specified
-    let style_content = if let Some(style_name) = style {
+    // Get style content and parse style guide
+    let (style_content, style_guide) = if let Some(style_name) = &style {
         let style_path = cwd.join("styles").join(format!("{}.md", style_name));
         if style_path.exists() {
-            Some(tokio::fs::read_to_string(&style_path).await.unwrap_or_default())
+            let content = tokio::fs::read_to_string(&style_path).await.unwrap_or_default();
+            let guide = crate::style_guide::parse_style_guide_from_markdown(&content);
+            (Some(content), Some(guide))
         } else {
-            None
+            (None, None)
         }
     } else {
-        None
+        (None, None)
     };
     
     // Read page content
@@ -203,14 +208,24 @@ pub async fn generate_image(
     
     // Determine page type and get template image
     let page_type = determine_page_type(&page_content, page_num, 0);
-    let template_image = if let Some(template_name) = template {
-        get_template_image(&cwd, &Some(template_name), page_type).await
+    let template_image = if let Some(template_name) = &template {
+        get_template_image(&cwd, &Some(template_name.clone()), page_type).await
     } else {
         None
     };
     
-    // Build prompt
-    let prompt = build_image_prompt(&page_content, style_content.as_deref(), page_type);
+    // Check if we have reference images (template images)
+    let has_reference_images = template_image.is_some();
+    
+    // Build prompt with style guide
+    let prompt = build_image_prompt(
+        &page_content,
+        style_content.as_deref(),
+        page_type,
+        layout_family.as_deref(),
+        style_guide.as_ref(),
+        has_reference_images,
+    );
     
     // Generate image - use two-digit format for output path
     let output_path = project_dir.join(format!("page-{:02}.png", page_num));
@@ -367,27 +382,73 @@ async fn get_template_image(cwd: &PathBuf, template_name: &Option<String>, page_
 }
 
 /// Build image generation prompt with Chinese descriptions
-fn build_image_prompt(page_content: &str, style_content: Option<&str>, page_type: &str) -> String {
+fn build_image_prompt(
+    page_content: &str,
+    style_content: Option<&str>,
+    page_type: &str,
+    layout_family: Option<&str>,
+    style_guide: Option<&crate::style_guide::StyleGuide>,
+    has_reference_images: bool,
+) -> String {
     let mut prompt_parts = Vec::new();
     
-    // Add style if provided - use full content directly
-    if let Some(style) = style_content {
+    // 如果有参考图，强化模板遵循要求
+    if has_reference_images {
+        prompt_parts.push("【核心任务】这是一张模板图片，你需要在此基础上生成新的页面。".to_string());
+        prompt_parts.push("".to_string());
+        prompt_parts.push("【必须严格遵守】参考图片中的以下元素是模板固有元素，必须保持原样不变：".to_string());
+        prompt_parts.push("1. 所有 Logo、品牌标识、商标 - 位置、大小、颜色完全不变".to_string());
+        prompt_parts.push("2. 背景色块、装饰图形、边框线条 - 形状、位置、颜色完全不变".to_string());
+        prompt_parts.push("3. 标题区域的位置和样式 - 仅替换标题文字，不改变样式".to_string());
+        prompt_parts.push("4. 页眉页脚、导航栏等固定区域 - 完全不变".to_string());
+        prompt_parts.push("5. 整体配色方案 - 主色、辅色、背景色完全一致".to_string());
+        prompt_parts.push("".to_string());
+        prompt_parts.push("【允许修改】只有内容区域的文字和数据可以更新。".to_string());
+        prompt_parts.push("".to_string());
+    }
+    
+    // 如果有风格指南，使用增强版提示词
+    if let Some(guide) = style_guide {
+        // 风格锚点
+        if !guide.prompt_anchor.is_empty() {
+            prompt_parts.push(format!("风格基调：{}", guide.prompt_anchor));
+        }
+        
+        // 配色
+        if !guide.style_core.palette.is_empty() {
+            prompt_parts.push(format!("配色方案：{}", guide.style_core.palette.join("、")));
+        }
+    } else if let Some(style) = style_content {
+        // 向后兼容：使用原始风格 Markdown
         prompt_parts.push(format!("风格要求：\n{}", style));
     }
     
-    // Add page type context in Chinese
+    // 页面类型描述
     let page_type_desc = match page_type {
-        "front-cover" => "这是一个封面页参考模板。请保持模板的固有元素及其大小不变（如logo、背景色块、导航布局、公司名称、保密提示等），只更新动态内容区域。",
-        "back-cover" => "这是一个封底页参考模板。请保持模板的固有元素及其大小不变（如logo、背景色块、导航布局、公司名称、保密提示等），只更新动态内容区域。",
-        _ => "这是一个内容页参考模板。请保持模板的固有元素及其大小不变（如logo、背景色块、导航布局、公司名称、保密提示等），只更新动态内容区域，确保信息清晰易读。",
+        "front-cover" => "\n页面类型：封面页（保持封面标题区、副标题区、装饰元素的布局不变）",
+        "back-cover" => "\n页面类型：封底页（保持致谢区、联系方式区的布局不变）",
+        _ => "\n页面类型：内容页（保持内容区域的卡片布局、图表样式不变）",
     };
     prompt_parts.push(page_type_desc.to_string());
     
-    // Use page content directly (raw markdown)
-    prompt_parts.push(format!("页面内容：\n{}", page_content));
+    // 过滤掉讲稿备注行
+    let filtered_content: String = page_content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.starts_with("**讲稿备注**") && !trimmed.starts_with("**讲稿**")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     
-    // Add image generation guidance
-    prompt_parts.push("\n请生成一张高质量的信息图表图片，尺寸比例适当，适合演示文稿使用。".to_string());
+    // 页面内容
+    prompt_parts.push(format!("\n需要更新的内容：\n{}", filtered_content));
+    
+    // 最终强调
+    if has_reference_images {
+        prompt_parts.push("".to_string());
+        prompt_parts.push("【最终检查】生成前请确认：模板固有元素是否保持不变？只修改了内容区域的文字？".to_string());
+    }
     
     prompt_parts.join("\n")
 }

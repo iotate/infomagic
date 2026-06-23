@@ -3,6 +3,7 @@ mod project;
 mod outline;
 mod template;
 mod style;
+mod style_guide;
 mod ai;
 mod pdf;
 mod error_log;
@@ -51,6 +52,11 @@ pub fn run() {
             style::get_style_content,
             style::save_style,
             style::delete_style,
+            // Style guide commands
+            style_guide::get_style_guide,
+            style_guide::update_style_adherence,
+            style_guide::get_layout_assignments,
+            style_guide::extract_style_guide_from_images,
             // AI commands
             ai::imggen::generate_all_images,
             ai::imggen::generate_image,
