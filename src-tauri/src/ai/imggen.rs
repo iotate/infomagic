@@ -3,6 +3,7 @@ use crate::error_log;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
+use futures::StreamExt;
 
 use super::{ImageGenerationOptions, ImageJobResult, ImageJobStatus};
 
@@ -57,73 +58,95 @@ pub async fn generate_all_images(
     
     let total_pages = page_files.len();
     
-    let mut results = Vec::new();
     // Use width/height from options, fallback to 1920x1080 (16:9)
     let width = options.width.unwrap_or(1920);
     let height = options.height.unwrap_or(1080);
     
-    for page_path in page_files {
-        let page_name = page_path.file_stem().unwrap().to_string_lossy().to_string();
-        let page_num: u32 = page_name
-            .strip_prefix("page-")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+    // 并发生成图片，最多 3 个并发
+    const MAX_CONCURRENT: usize = 3;
+    
+    // 创建生成任务
+    let futures_stream = futures::stream::iter(page_files.into_iter().map(|page_path| {
+        let cwd = cwd.clone();
+        let cwd_path = cwd_path.clone();
+        let style_content = style_content.clone();
+        let config = config.clone();
+        let project_dir = project_dir.clone();
+        let template_opt = options.template.clone();
         
-        // Read page content
-        let page_content = match tokio::fs::read_to_string(&page_path).await {
-            Ok(content) => content,
-            Err(e) => {
-                let error = format!("Failed to read page file {}: {}", page_name, e);
-                error_log::log_error(&cwd_path, &error);
-                results.push(ImageJobResult {
-                    page_num,
-                    status: ImageJobStatus::Failed(error.clone()),
-                    output_path: None,
-                    error: Some(error),
-                });
-                continue;
+        async move {
+            let page_name = page_path.file_stem().unwrap().to_string_lossy().to_string();
+            let page_num: u32 = page_name
+                .strip_prefix("page-")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            
+            // Read page content
+            let page_content = match tokio::fs::read_to_string(&page_path).await {
+                Ok(content) => content,
+                Err(e) => {
+                    let error = format!("Failed to read page file {}: {}", page_name, e);
+                    error_log::log_error(&cwd_path, &error);
+                    return ImageJobResult {
+                        page_num,
+                        status: ImageJobStatus::Failed(error.clone()),
+                        output_path: None,
+                        error: Some(error),
+                    };
+                }
+            };
+            
+            // Determine page type and get template image
+            let page_type = determine_page_type(&page_content, page_num, total_pages);
+            let template_image = get_template_image(&cwd, &template_opt, page_type).await;
+            
+            // Build prompt (without style guide for backward compatibility)
+            let prompt = build_image_prompt(&page_content, style_content.as_deref(), page_type, None, None, false);
+            
+            // Generate image - use two-digit format for output path
+            let output_path = project_dir.join(format!("page-{:02}.png", page_num));
+            
+            let result = if let Some(template_path) = template_image {
+                generate_image_with_template(&prompt, width, height, &config, &output_path, &template_path).await
+            } else {
+                generate_single_image(&prompt, width, height, &config, &output_path).await
+            };
+            
+            match result {
+                Ok(_) => {
+                    error_log::log_info(&cwd_path, &format!("Image generated successfully for page {}", page_num));
+                    ImageJobResult {
+                        page_num,
+                        status: ImageJobStatus::Success,
+                        output_path: Some(output_path.to_string_lossy().to_string()),
+                        error: None,
+                    }
+                },
+                Err(e) => {
+                    error_log::log_error(&cwd_path, &format!("Failed to generate image for page {}: {}", page_num, e));
+                    ImageJobResult {
+                        page_num,
+                        status: ImageJobStatus::Failed(e.clone()),
+                        output_path: None,
+                        error: Some(e),
+                    }
+                }
             }
-        };
-        
-        // Determine page type and get template image
-        let page_type = determine_page_type(&page_content, page_num, total_pages);
-        let template_image = get_template_image(&cwd, &options.template, page_type).await;
-        
-        // Build prompt (without style guide for backward compatibility)
-        let prompt = build_image_prompt(&page_content, style_content.as_deref(), page_type, None, None, false);
-        
-        // Generate image
-        let output_path = project_dir.join(format!("page-{}.png", page_num));
-        
-        let result = if let Some(template_path) = template_image {
-            // Use template as reference (image-to-image)
-            generate_image_with_template(&prompt, width, height, &config, &output_path, &template_path).await
-        } else {
-            // Generate without template (text-to-image)
-            generate_single_image(&prompt, width, height, &config, &output_path).await
-        };
-        
-        let (status, output_path_str, error) = match result {
-            Ok(_) => {
-                error_log::log_info(&cwd_path, &format!("Image generated successfully for page {}", page_num));
-                (ImageJobStatus::Success, Some(output_path.to_string_lossy().to_string()), None)
-            },
-            Err(e) => {
-                error_log::log_error(&cwd_path, &format!("Failed to generate image for page {}: {}", page_num, e));
-                (ImageJobStatus::Failed(e.clone()), None, Some(e))
-            }
-        };
-        
-        results.push(ImageJobResult {
-            page_num,
-            status,
-            output_path: output_path_str,
-            error,
-        });
-    }
+        }
+    }));
+    
+    // 使用 buffer_unordered 控制并发数
+    let results: Vec<ImageJobResult> = futures_stream
+        .buffer_unordered(MAX_CONCURRENT)
+        .collect()
+        .await;
+    
+    // 按页码排序结果
+    let mut sorted_results = results;
+    sorted_results.sort_by_key(|r| r.page_num);
     
     error_log::log_info(&cwd_path, &format!("Image generation completed for project: {}", project_name));
-    Ok(results)
+    Ok(sorted_results)
 }
 
 #[tauri::command]
@@ -174,9 +197,9 @@ pub async fn generate_image(
     width: u32,
     height: u32,
     config: ImageConfig,
-    layout_family: Option<String>,
-    adherence_level: Option<String>,
-    llm_config: Option<crate::config::ApiConfig>,
+    _layout_family: Option<String>,
+    _adherence_level: Option<String>,
+    _llm_config: Option<crate::config::ApiConfig>,
 ) -> Result<String, String> {
     let cwd_path = cwd.inner().clone();
     let project_dir = cwd.join("projects").join(&project_name);
@@ -222,7 +245,7 @@ pub async fn generate_image(
         &page_content,
         style_content.as_deref(),
         page_type,
-        layout_family.as_deref(),
+        _layout_family.as_deref(),
         style_guide.as_ref(),
         has_reference_images,
     );
@@ -332,6 +355,170 @@ pub async fn refine_image(
     Ok(output_path.to_string_lossy().to_string())
 }
 
+/// 使用多模态模型微调图片（基于参考图的编辑）
+#[tauri::command]
+pub async fn refine_image_with_reference(
+    cwd: State<'_, Arc<PathBuf>>,
+    project_name: String,
+    page_num: u32,
+    refine_prompt: String,
+    width: u32,
+    height: u32,
+    config: ImageConfig,
+) -> Result<String, String> {
+    let project_dir = cwd.join("projects").join(&project_name);
+    let output_path = project_dir.join(format!("page-{:02}.png", page_num));
+    
+    if !output_path.exists() {
+        return Err(format!("Image for page {} not found", page_num));
+    }
+    
+    // 读取现有图片并转为 base64
+    let image_data = tokio::fs::read(&output_path)
+        .await
+        .map_err(|e| format!("Failed to read image: {}", e))?;
+    
+    let base64_image = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &image_data);
+    let data_uri = format!("data:image/png;base64,{}", base64_image);
+    
+    // 构建提示词
+    let prompt = format!(
+        "请根据以下要求对图片进行微调，保持整体风格和布局不变，只修改指定部分：\n\n{}\n\n请生成修改后的图片。",
+        refine_prompt
+    );
+    
+    // 使用图片生成 API（带参考图）
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let model_lower = config.model.to_lowercase();
+    let is_gpt_image = model_lower.contains("gpt");
+    let is_agnes = model_lower.starts_with("agnes");
+    
+    if is_gpt_image {
+        // GPT-Image: 使用 /images/edits 端点
+        let edit_endpoint = config.endpoint.replace("/generations", "/edits");
+        
+        let form = reqwest::multipart::Form::new()
+            .text("model", config.model.clone())
+            .text("prompt", prompt.clone())
+            .text("size", format!("{}x{}", width, height))
+            .text("n", "1")
+            .part("image[]", reqwest::multipart::Part::bytes(image_data.clone())
+                .file_name("image.png")
+                .mime_str("image/png")
+                .map_err(|e| format!("Failed to set mime type: {}", e))?);
+        
+        let mut request = client
+            .post(&edit_endpoint)
+            .header("Authorization", format!("Bearer {}", config.api_key));
+        
+        for header in &config.extra_headers {
+            request = request.header(&header.key, &header.value);
+        }
+        
+        let response = request
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| format!("Image edit API request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Image edit API error (HTTP {}): {}", status, error_text));
+        }
+        
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse API response: {}", e))?;
+        
+        handle_image_response(&json, &output_path).await?;
+        Ok(output_path.to_string_lossy().to_string())
+    } else if is_agnes {
+        // Agnes: 使用 extra_body.image 参数
+        let request_body = serde_json::json!({
+            "model": config.model,
+            "prompt": prompt,
+            "size": format!("{}x{}", width, height),
+            "extra_body": {
+                "image": [data_uri],
+                "response_format": "b64_json"
+            }
+        });
+        
+        let mut request = client
+            .post(&config.endpoint)
+            .header("Authorization", format!("Bearer {}", config.api_key))
+            .header("Content-Type", "application/json");
+        
+        for header in &config.extra_headers {
+            request = request.header(&header.key, &header.value);
+        }
+        
+        let response = request
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| format!("Image generation API request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Image generation API error (HTTP {}): {}", status, error_text));
+        }
+        
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse API response: {}", e))?;
+        
+        handle_image_response(&json, &output_path).await?;
+        Ok(output_path.to_string_lossy().to_string())
+    } else {
+        // 其他模型：使用标准格式
+        let request_body = serde_json::json!({
+            "model": config.model,
+            "prompt": prompt,
+            "image": [data_uri],
+            "size": format!("{}x{}", width, height),
+            "n": 1,
+        });
+        
+        let mut request = client
+            .post(&config.endpoint)
+            .header("Authorization", format!("Bearer {}", config.api_key))
+            .header("Content-Type", "application/json");
+        
+        for header in &config.extra_headers {
+            request = request.header(&header.key, &header.value);
+        }
+        
+        let response = request
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| format!("Image generation API request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(format!("Image generation API error (HTTP {}): {}", status, error_text));
+        }
+        
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse API response: {}", e))?;
+        
+        handle_image_response(&json, &output_path).await?;
+        Ok(output_path.to_string_lossy().to_string())
+    }
+}
+
 /// Determine page type based on content and position
 fn determine_page_type(content: &str, page_num: u32, total_pages: usize) -> &'static str {
     // First page is always front cover
@@ -386,7 +573,7 @@ fn build_image_prompt(
     page_content: &str,
     style_content: Option<&str>,
     page_type: &str,
-    layout_family: Option<&str>,
+    _layout_family: Option<&str>,
     style_guide: Option<&crate::style_guide::StyleGuide>,
     has_reference_images: bool,
 ) -> String {

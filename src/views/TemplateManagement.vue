@@ -165,7 +165,7 @@ function getPreviewUrl(template: TemplateInfo, type: 'front' | 'content' | 'back
 
 <style scoped>
 .template-management {
-  max-width: 1200px;
+  max-width: 1920px;
   margin: 0 auto;
   padding: 0 16px;
 }

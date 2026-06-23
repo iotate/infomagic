@@ -109,6 +109,11 @@ const selectedSizeIndex = ref(3) // 默认 4:3，会从 prompt.md 读取
 const layoutAssignments = ref<Record<number, string>>({})
 const adherenceLevel = ref<'loose' | 'balanced' | 'strict'>('strict')
 
+// 图片微调
+const showRefineModal = ref(false)
+const refinePrompt = ref('')
+const refining = ref(false)
+
 const projectId = route.params.id as string
 
 const selectedPage = computed(() => pages.value[selectedPageIndex.value] || null)
@@ -294,10 +299,39 @@ async function selectPage(index: number) {
   // 不再需要每次切换时加载，因为 loadPages 已经加载了所有内容
 }
 
+// 删除当前页面
+async function deleteCurrentPage() {
+  if (!selectedPage.value) return
+  
+  if (pages.value.length <= 1) {
+    alert('至少需要保留一个页面')
+    return
+  }
+  
+  const pageNum = selectedPage.value.page_num
+  
+  try {
+    await invoke('delete_page', {
+      projectName: projectId,
+      pageNum: pageNum
+    })
+    
+    // 重新加载页面列表
+    await loadPages()
+    
+    // 调整选中页
+    if (selectedPageIndex.value >= pages.value.length) {
+      selectedPageIndex.value = pages.value.length - 1
+    }
+  } catch (e) {
+    console.error('删除页面失败:', e)
+    alert('删除页面失败：' + e)
+  }
+}
+
 // 保存所有页面内容
 async function saveAllPages() {
   if (pages.value.length === 0) {
-    alert('没有页面可保存')
     return
   }
   
@@ -324,11 +358,6 @@ async function saveAllPages() {
   
   saving.value = false
   
-  if (failedCount === 0) {
-    alert(`所有 ${savedCount} 个页面已保存`)
-  } else {
-    alert(`保存完成：成功 ${savedCount} 个，失败 ${failedCount} 个`)
-  }
 }
 
 // 是否有已生成的图片
@@ -373,16 +402,16 @@ async function generateCurrentImage() {
     if (imagePath) {
       selectedPage.value.image_path = imagePath
     }
-    alert('图片生成成功')
+    // 成功时不提示，直接展示
   } catch (e) {
     selectedPage.value.image_status = 'failed'
     const errorMsg = String(e)
     console.error('图片生成失败:', errorMsg)
-    alert('图片生成失败：' + errorMsg + '\n\n详细信息请查看 error.log 文件')
+    alert('图片生成失败：' + errorMsg + '\n\n详细信息请查看 错误日志')
   }
 }
 
-// 批量生成图片
+// 批量生成图片（调用后端并发接口，最多 3 个并发）
 async function generateAllImages() {
   if (!selectedStyle.value) {
     alert('请先选择风格')
@@ -392,70 +421,140 @@ async function generateAllImages() {
   const config = await invoke<any>('load_config')
   const size = imageSizes.value[selectedSizeIndex.value] || { width: 1920, height: 1080 }
   
-  // 获取版式分配
-  try {
-    const assignments = await invoke<Record<number, string>>('get_layout_assignments', {
-      projectName: projectId,
-      styleName: selectedStyle.value,
-      pageCount: pages.value.length
-    })
-    layoutAssignments.value = assignments
-  } catch (e) {
-    console.error('获取版式分配失败:', e)
-  }
-  
   generatingAll.value = true
   generatingProgress.value = 0
   
-  let successCount = 0
-  let failCount = 0
-  const errors: string[] = []
-  
-  // 先清理所有页面的图片和状态
+  // 先标记所有页面为生成中
   for (let i = 0; i < pages.value.length; i++) {
     pages.value[i].image_path = undefined
-    pages.value[i].image_status = 'pending'
+    pages.value[i].image_status = 'generating'
   }
   
-  for (let i = 0; i < pages.value.length; i++) {
-    pages.value[i].image_status = 'generating'
-    try {
-      // 获取当前页面的版式分配
-      const currentLayout = layoutAssignments.value[pages.value[i].page_num] || null
-      
-      // 返回值是图片路径字符串
-      const imagePath = await invoke<string>('generate_image', { 
-        projectName: projectId,
-        pageNum: pages.value[i].page_num,
+  try {
+    // 调用后端并发接口
+    const results = await invoke<Array<{
+      page_num: number
+      status: any
+      output_path: string | null
+      error: string | null
+    }>>('generate_all_images', {
+      projectName: projectId,
+      options: {
         template: selectedTemplate.value === 'none' ? null : selectedTemplate.value || null,
         style: selectedStyle.value || null,
         width: size.width,
-        height: size.height,
-        config: config.img,
-        layoutFamily: currentLayout,
-        adherenceLevel: adherenceLevel.value
-      })
-      pages.value[i].image_status = 'done'
-      // 更新图片路径以立即刷新显示
-      if (imagePath) {
-        pages.value[i].image_path = imagePath
+        height: size.height
+      },
+      config: config.img
+    })
+    
+    // 更新每个页面的状态
+    let successCount = 0
+    let failCount = 0
+    const errors: string[] = []
+    
+    for (const result of results) {
+      const pageIndex = pages.value.findIndex(p => p.page_num === result.page_num)
+      if (pageIndex === -1) continue
+      
+      // 检查状态 - Rust 枚举序列化为字符串 "Success" 或对象 { "Failed": "错误信息" }
+      const status = result.status
+      let isSuccess = false
+      let errorMsg = result.error || '未知错误'
+      
+      if (typeof status === 'string') {
+        // 字符串格式：直接比较
+        isSuccess = status === 'Success'
+        if (status.startsWith('Failed(')) {
+          // 解析 "Failed(错误信息)" 格式
+          const match = status.match(/^Failed\((.+)\)$/)
+          if (match) errorMsg = match[1]
+        }
+      } else if (typeof status === 'object' && status !== null) {
+        // 对象格式：{ "Success": null } 或 { "Failed": "错误信息" }
+        if ('Success' in status) {
+          isSuccess = true
+        } else if ('Failed' in status) {
+          errorMsg = (status as any).Failed || errorMsg
+        }
       }
-      successCount++
-    } catch (e) {
-      pages.value[i].image_status = 'failed'
-      failCount++
-      errors.push(`页面 ${pages.value[i].page_num}: ${e}`)
-      console.error(`页面 ${pages.value[i].page_num} 生成失败:`, e)
+      
+      if (isSuccess && result.output_path) {
+        pages.value[pageIndex].image_status = 'done'
+        pages.value[pageIndex].image_path = result.output_path
+        successCount++
+      } else {
+        pages.value[pageIndex].image_status = 'failed'
+        failCount++
+        errors.push(`页面 ${result.page_num}: ${errorMsg}`)
+      }
     }
-    generatingProgress.value = Math.round(((i + 1) / pages.value.length) * 100)
+    
+    generatingProgress.value = 100
+    
+  } catch (e) {
+    console.error('批量生成失败:', e)
+    alert('批量生成失败：' + e)
+    // 重置所有页面状态
+    for (let i = 0; i < pages.value.length; i++) {
+      if (pages.value[i].image_status === 'generating') {
+        pages.value[i].image_status = 'pending'
+      }
+    }
+  } finally {
+    generatingAll.value = false
+  }
+}
+
+// 打开微调弹窗
+function openRefineModal() {
+  if (!selectedPage.value?.image_path) {
+    alert('请先生成图片')
+    return
+  }
+  refinePrompt.value = ''
+  showRefineModal.value = true
+}
+
+// 微调图片
+async function refineImage() {
+  if (!selectedPage.value) return
+  
+  if (!refinePrompt.value.trim()) {
+    alert('请输入微调要求')
+    return
   }
   
-  generatingAll.value = false
+  const config = await invoke<any>('load_config')
+  const size = imageSizes.value[selectedSizeIndex.value] || { width: 1920, height: 1080 }
   
-  if (failCount === 0) {
-    alert(`所有图片生成成功！共 ${successCount} 张`)
-  } else {
-    alert(`图片生成完成\n成功: ${successCount} 张\n失败: ${failCount} 张\n\n失败详情:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? '\n...' : ''}\n\n详细信息请查看 error.log 文件`)
+  refining.value = true
+  
+  try {
+    const imagePath = await invoke<string>('refine_image_with_reference', {
+      projectName: projectId,
+      pageNum: selectedPage.value.page_num,
+      refinePrompt: refinePrompt.value.trim(),
+      width: size.width,
+      height: size.height,
+      config: config.img
+    })
+    
+    // 强制刷新图片：先清空再赋值
+    if (imagePath) {
+      selectedPage.value.image_path = undefined
+      // 使用 nextTick 确保 Vue 完成更新
+      await new Promise(resolve => setTimeout(resolve, 10))
+      selectedPage.value.image_path = imagePath
+    }
+    
+    showRefineModal.value = false
+    // 成功时不提示，直接展示
+  } catch (e) {
+    console.error('图片微调失败:', e)
+    alert('图片微调失败：' + e)
+  } finally {
+    refining.value = false
   }
 }
 
@@ -464,7 +563,7 @@ async function exportPdf() {
   // 检查是否有图片
   const hasImages = pages.value.some(p => p.image_status === 'done')
   if (!hasImages) {
-    alert('请先生成图片再导出PDF。点击"批量生成"或"生成当前"按钮生成图片。')
+    alert('请先生成图片')
     return
   }
   
@@ -482,7 +581,6 @@ async function exportPdf() {
     const pdfPath = await invoke<string>('export_pdf', { 
         projectName: projectId
       })
-      alert(`PDF 导出成功！\n文件位置: ${pdfPath}`)
       
       // 打开导出的 PDF 文件所在文件夹
       try {
@@ -537,9 +635,17 @@ function goBack() {
         </a-select>
         <a-divider type="vertical" />
         <a-button @click="saveAllPages" :loading="saving">保存</a-button>
-        <a-button type="primary" @click="generateAllImages" :loading="generatingAll">批量生成</a-button>
+        <a-popconfirm
+          title="确定要删除当前页面吗？"
+          :ok-text="'删除'"
+          :cancel-text="'取消'"
+          @confirm="deleteCurrentPage"
+        >
+          <a-button type="text" danger :disabled="pages.length <= 1">删除当前</a-button>
+        </a-popconfirm>
+        <a-button type="primary" @click="generateAllImages" :loading="generatingAll">生成全部</a-button>
         <a-button @click="generateCurrentImage" :loading="selectedPage?.image_status === 'generating'">生成当前</a-button>
-        <a-tooltip :title="!hasGeneratedImages ? '请先批量生成或生成当前图片' : ''">
+        <a-tooltip :title="!hasGeneratedImages ? '请先生成全部或当前图片' : ''">
           <a-button @click="exportPdf" :disabled="!hasGeneratedImages" :loading="exporting">导出</a-button>
         </a-tooltip>
       </a-space>
@@ -592,14 +698,11 @@ function goBack() {
         <!-- 右侧：图片预览 -->
         <div class="right-panel">
           <div class="image-preview-header">
-            <span>图片预览</span>
-            <a-button 
-              v-if="selectedPage?.image_path" 
-              size="small" 
-              @click="openImageFolder(selectedPage.image_path)"
-            >
-              打开文件夹
-            </a-button>
+            <span>图片预览（方向键翻页）</span>
+            <a-space v-if="selectedPage?.image_path">
+              <a-button size="small" @click="openRefineModal">微调</a-button>
+              <a-button size="small" @click="openImageFolder(selectedPage.image_path)">打开文件夹</a-button>
+            </a-space>
           </div>
           
           <div class="image-preview" :class="{ clickable: selectedPage?.image_path }">
@@ -634,11 +737,37 @@ function goBack() {
         </div>
       </div>
     </div>
+
+    <!-- 图片微调弹窗 -->
+    <a-modal
+      v-model:open="showRefineModal"
+      title="图片微调"
+      ok-text="微调"
+      cancel-text="取消"
+      :confirm-loading="refining"
+      :closable="!refining"
+      :maskClosable="false"
+      :keyboard="!refining"
+      @ok="refineImage"
+      @cancel="!refining && (showRefineModal = false)"
+      width="500px"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="微调要求">
+          <a-textarea
+            v-model:value="refinePrompt"
+            :rows="4"
+            :disabled="refining"
+            placeholder="描述你想要的修改，例如：&#10;- 将背景色改为蓝色&#10;- 添加一个图表&#10;- 修改标题样式"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </template>
 
 <style scoped>
 .pages-page {
-  max-width: 1200px;
+  max-width: 1920px;
   margin: 0 auto;
   padding: 0 16px;
 }

@@ -201,7 +201,7 @@ function hasImages(project: ProjectInfo): boolean {
 
 <style scoped>
 .project-list {
-  max-width: 1200px;
+  max-width: 1920px;
   margin: 0 auto;
   padding: 0 16px;
 }

@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::path::PathBuf;
+use tauri::State;
+use crate::config::{ApiConfig, ExtraHeader};
+use crate::error_log;
 
 /// 风格遵循强度
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -587,12 +592,6 @@ mod tests {
 
 // ============ Tauri Commands ============
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use tauri::State;
-use crate::config::ApiConfig;
-use crate::error_log;
-
 /// 获取风格指南
 #[tauri::command]
 pub async fn get_style_guide(
@@ -760,12 +759,17 @@ pub async fn extract_style_guide_from_images(
     }
     
     // 构建分析提示词
-    let analysis_prompt = r#"请分析这些原稿图的 PPT 风格，提炼出稳定的版式与视觉语言，供后续多页 PPT 统一复用。
+    let analysis_prompt = r#"请仔细分析这些原稿图的 PPT 风格，提炼出稳定的版式与视觉语言，供后续多页 PPT 统一复用。
+
+【重要】颜色提取要求：
+1. 仔细观察图片中实际使用的颜色，准确提取主色、辅助色、背景色
+2. 必须提供准确的 HEX 颜色代码（如 #FF5733），不要凭空想象颜色
+3. 如果图片明显是红色主基调，请如实返回红色系颜色
 
 请返回 JSON 格式，包含以下字段：
 {
   "style_core": {
-    "background_tone": "背景色调描述，如'浅灰底色'或'深蓝底色'",
+    "background_tone": "背景色调描述（如'浅灰底色'、'深蓝底色'）",
     "palette": ["主色名称 (#颜色代码)", "辅助色名称 (#颜色代码)", "背景色名称 (#颜色代码)"],
     "title_style": "标题样式描述",
     "card_style": "卡片样式描述",
@@ -817,15 +821,11 @@ pub async fn extract_style_guide_from_images(
             "model": config.model,
             "messages": [
                 {
-                    "role": "system",
-                    "content": "你是 PPT 视觉风格分析 agent。你只返回 JSON。你需要从原稿图片中提炼稳定的版式与视觉语言，供后续多页 PPT 统一复用。"
-                },
-                {
                     "role": "user",
                     "content": content_items
                 }
             ],
-            "temperature": 0.3,
+            "temperature": 0.3
         }))
         .send()
         .await
@@ -837,6 +837,12 @@ pub async fn extract_style_guide_from_images(
     
     if !response.status().is_success() {
         let error_text = response.text().await.unwrap_or_default();
+        // 检查是否是不支持多模态的错误
+        if error_text.contains("unknown variant 'image_url'") || error_text.contains("image_url") {
+            let error = "当前配置的 LLM 模型不支持图片输入（多模态）。请使用支持视觉能力的模型，如 GPT-4o、Qwen-VL、DeepSeek-V4 等。".to_string();
+            error_log::log_error(&cwd_path, &error);
+            return Err(error);
+        }
         let error = format!("LLM API 错误: {}", error_text);
         error_log::log_error(&cwd_path, &error);
         return Err(error);
@@ -875,4 +881,215 @@ pub async fn extract_style_guide_from_images(
     }
     
     Ok(guide)
+}
+
+/// 从单个文件（图片或PPTX）提取风格并保存为风格文件
+#[tauri::command]
+pub async fn extract_style_from_file(
+    cwd: State<'_, Arc<PathBuf>>,
+    file_path: String,
+    style_name: String,
+) -> Result<String, String> {
+    let cwd_path = cwd.inner().clone();
+    
+    // 检查文件是否存在
+    let path = std::path::PathBuf::from(&file_path);
+    if !path.exists() {
+        let error = format!("文件不存在: {}", file_path);
+        error_log::log_error(&cwd_path, &error);
+        return Err(error);
+    }
+    
+    // 读取配置 - 使用 YAML 格式
+    let config_path = cwd.join("config.yaml");
+    if !config_path.exists() {
+        let error = "配置文件不存在，请先完成 API 配置".to_string();
+        error_log::log_error(&cwd_path, &error);
+        return Err(error);
+    }
+    
+    let config_content = tokio::fs::read_to_string(&config_path)
+        .await
+        .map_err(|e| {
+            let error = format!("读取配置失败: {}", e);
+            error_log::log_error(&cwd_path, &error);
+            error
+        })?;
+    
+    let config: crate::config::AppConfig = serde_yaml::from_str(&config_content)
+        .map_err(|e| {
+            let error = format!("解析配置失败: {}", e);
+            error_log::log_error(&cwd_path, &error);
+            error
+        })?;
+    
+    let llm_config = config.llm;
+    
+    if llm_config.api_key.is_empty() {
+        let error = "请先配置 LLM API Key".to_string();
+        error_log::log_error(&cwd_path, &error);
+        return Err(error);
+    }
+    
+    // 读取文件并转为 base64
+    let file_data = tokio::fs::read(&path)
+        .await
+        .map_err(|e| {
+            let error = format!("读取文件失败: {}", e);
+            error_log::log_error(&cwd_path, &error);
+            error
+        })?;
+    
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
+    
+    // 处理 PPTX 文件 - 暂时只支持图片
+    if extension == "pptx" {
+        return Err("暂不支持 PPTX 文件，请先导出为图片".to_string());
+    }
+    
+    let mime = match extension.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+    
+    let base64_image = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &file_data);
+    let image_data = format!("data:{};base64,{}", mime, base64_image);
+    
+    // 构建分析提示词
+    let analysis_prompt = r#"请仔细分析这张图片的设计风格，准确提取视觉元素，用于生成类似风格的PPT或信息图表。
+
+【重要】颜色提取要求：
+1. 仔细观察图片中实际使用的颜色，准确提取主色、辅助色、背景色
+2. 必须提供准确的 HEX 颜色代码（如 #FF5733），不要凭空想象颜色
+3. 如果图片明显是红色主基调，请如实返回红色系颜色
+
+请返回 JSON 格式，包含以下字段：
+{
+  "style_core": {
+    "background_tone": "背景色调描述（如'浅灰底色'、'深蓝底色'）",
+    "palette": ["主色名称 (#颜色代码)", "辅助色名称 (#颜色代码)", "背景色名称 (#颜色代码)"],
+    "title_style": "标题样式描述",
+    "card_style": "卡片样式描述",
+    "icon_style": "图标样式描述",
+    "line_style": "线条样式描述"
+  },
+  "layout_families": ["适用的版式类型"],
+  "element_primitives": ["视觉元素特征"],
+  "negative_rules": ["禁止事项"],
+  "prompt_anchor": "一段简洁的风格锚点描述，包含配色方案、整体风格、视觉语言等关键信息"
+}
+
+注意：只返回 JSON，不要包含其他文字"#;
+
+    // 构建消息内容
+    let content_items: Vec<serde_json::Value> = vec![
+        serde_json::json!({
+            "type": "text",
+            "text": analysis_prompt
+        }),
+        serde_json::json!({
+            "type": "image_url",
+            "image_url": {
+                "url": image_data
+            }
+        })
+    ];
+    
+    // 调用 LLM API
+    let client = reqwest::Client::new();
+    
+    let mut request = client
+        .post(format!("{}/chat/completions", llm_config.endpoint))
+        .header("Authorization", format!("Bearer {}", llm_config.api_key))
+        .header("Content-Type", "application/json");
+    
+    for header in &llm_config.extra_headers {
+        request = request.header(&header.key, &header.value);
+    }
+    
+    let response = request
+        .json(&serde_json::json!({
+            "model": llm_config.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": content_items
+                }
+            ],
+            "temperature": 0.1
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("LLM API 请求失败: {}", e))?;
+    
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        // 检查是否是不支持多模态的错误
+        if error_text.contains("unknown variant 'image_url'") || error_text.contains("image_url") {
+            return Err("当前配置的 LLM 模型不支持图片输入（多模态）。请使用支持视觉能力的模型，如 GPT-4o、Qwen-VL、DeepSeek-V4 等。".to_string());
+        }
+        return Err(format!("LLM API 错误: {}", error_text));
+    }
+    
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析 LLM 响应失败: {}", e))?;
+    
+    let content = json["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or("无法从 LLM 响应中提取内容")?;
+    
+    // 解析 JSON
+    let guide: StyleGuide = serde_json::from_str(content)
+        .map_err(|e| format!("解析风格指南失败: {}, 原始内容: {}", e, content))?;
+    
+    // 生成 Markdown 内容
+    let md_content = format!(r#"# {}
+
+{}
+
+## 风格锚点
+{}
+
+## 配色
+{}
+
+## 背景基调
+{}
+
+## 标题样式
+{}
+
+## 卡片样式
+{}
+
+## 图标样式
+{}
+
+## 线条样式
+{}
+
+## 禁止规则
+{}
+"#,
+        style_name,
+        guide.prompt_anchor,
+        guide.prompt_anchor,
+        guide.style_core.palette.iter().map(|c| format!("- {}", c)).collect::<Vec<_>>().join("\n"),
+        guide.style_core.background_tone,
+        guide.style_core.title_style,
+        guide.style_core.card_style,
+        guide.style_core.icon_style,
+        guide.style_core.line_style,
+        guide.negative_rules.iter().map(|r| format!("- {}", r)).collect::<Vec<_>>().join("\n")
+    );
+    
+    error_log::log_info(&cwd_path, &format!("Style extracted: {}", style_name));
+    
+    // 返回 Markdown 内容，让前端编辑后再保存
+    Ok(md_content)
 }

@@ -57,13 +57,17 @@ pub fn run() {
             style_guide::update_style_adherence,
             style_guide::get_layout_assignments,
             style_guide::extract_style_guide_from_images,
+            style_guide::extract_style_from_file,
             // AI commands
             ai::imggen::generate_all_images,
             ai::imggen::generate_image,
             ai::imggen::regenerate_image,
             ai::imggen::refine_image,
+            ai::imggen::refine_image_with_reference,
             // PDF commands
             pdf::export_pdf,
+            // Page commands
+            project::delete_page,
             // Log commands
             error_log::load_error_log,
             error_log::clear_error_log,

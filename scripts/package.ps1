@@ -10,7 +10,7 @@ $SRC_TAURI_DIR = Join-Path $ROOT_DIR "src-tauri"
 $RELEASE_DIR = Join-Path $SRC_TAURI_DIR "target\release"
 $BUNDLE_DIR = Join-Path $RELEASE_DIR "bundle"
 $OUTPUT_DIR = Join-Path $ROOT_DIR "output"
-$VERSION = "0.1.0"
+$VERSION = "0.2.0"
 
 # 设置 MinGW 路径
 $env:PATH = "D:\Dev\mingw64\bin;$env:PATH"

@@ -156,12 +156,12 @@ async function generateOutline() {
         content: content 
       })
     } catch (saveError) {
-      alert('大纲生成成功，但自动保存失败：' + saveError)
+      console.error('自动保存失败:', saveError)
     }
   } catch (e) {
     const errorMsg = String(e)
     console.error('大纲生成失败:', errorMsg)
-    alert('生成失败：' + errorMsg + '\n\n详细错误已记录到 error.log 文件')
+    alert('生成失败：' + errorMsg)
   } finally {
     generating.value = false
   }
@@ -169,7 +169,6 @@ async function generateOutline() {
 
 async function saveOutline() {
   if (!outlineContent.value.trim()) {
-    alert('大纲内容为空')
     return
   }
   
@@ -179,7 +178,6 @@ async function saveOutline() {
       projectName: projectId, 
       content: outlineContent.value 
     })
-    alert('大纲已保存')
   } catch (e) {
     alert('保存失败：' + e)
   } finally {
@@ -200,7 +198,6 @@ async function splitToPages() {
   splitting.value = true
   try {
     await invoke('split_pages', { name: projectId })
-    alert('页面切分成功！')
     router.push({ name: 'pages', params: { id: projectId } })
   } catch (e) {
     alert('切分失败：' + e)
@@ -286,7 +283,7 @@ function goToPages() {
 
 <style scoped>
 .outline-page {
-  max-width: 1200px;
+  max-width: 1920px;
   margin: 0 auto;
   padding: 0 16px;
 }

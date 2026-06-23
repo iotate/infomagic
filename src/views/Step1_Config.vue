@@ -32,7 +32,6 @@ interface AppConfig {
 // LLM 提供商预设
 const llmProviders = {
   openai: { endpoint: 'https://api.openai.com/v1', model: 'gpt-5' },
-  azure: { endpoint: 'https://your-resource.openai.azure.com', model: 'gpt-5' },
   dashscope: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus-3.6' },
   deepseek: { endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' },
   agnes: { endpoint: 'https://apihub.agnes-ai.com/v1', model: 'agnes-2.0-flash' },
@@ -42,9 +41,8 @@ const llmProviders = {
 // 图像生成提供商预设
 const imgProviders = {
   openai: { endpoint: 'https://api.openai.com/v1/images/generations', model: 'gpt-image-2' },
-  azure: { endpoint: 'https://your-resource.openai.azure.com', model: 'gpt-image-2' },
+  google: { endpoint: 'https://generativelanguage.googleapis.com/v1beta/images', model: 'gemini-3.1-flash-image-preview' },
   dashscope: { endpoint: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis', model: 'wanx-v1' },
-  replicate: { endpoint: 'https://api.replicate.com/v1/predictions', model: 'stability-ai/sdxl' },
   agnes: { endpoint: 'https://apihub.agnes-ai.com/v1/images/generations', model: 'agnes-image-2.0-flash' },
   custom: { endpoint: '', model: '' }
 }
@@ -203,7 +201,6 @@ async function saveConfig() {
         ]
       }
     })
-    alert('配置保存成功！')
   } catch (e) {
     alert(`保存失败: ${e}`)
   } finally {
@@ -409,7 +406,7 @@ function goBack() {
 
 <style scoped>
 .config-page {
-  max-width: 1200px;
+  max-width: 1920px;
   margin: 0 auto;
   padding: 0 16px;
 }

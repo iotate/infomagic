@@ -15,7 +15,7 @@ const SRC_TAURI_DIR = join(ROOT_DIR, 'src-tauri')
 const RELEASE_DIR = join(SRC_TAURI_DIR, 'target', 'release')
 const BUNDLE_DIR = join(RELEASE_DIR, 'bundle')
 const OUTPUT_DIR = join(ROOT_DIR, 'output')
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
 
 // 需要打包的数据目录
 const DATA_FOLDERS = ['src-tauri/config.yaml', 'src-tauri/templates', 'src-tauri/styles', 'projects']

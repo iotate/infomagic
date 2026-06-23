@@ -1,7 +1,7 @@
 [package]
 name = "infomagic"
-version = "0.1.0"
-description = "InfoMagic - 信息图表生成器"
+version = "0.2.0"
+description = "InfoMagic - 信息图表生成"
 authors = ["iotate"]
 edition = "2021"
 
@@ -29,6 +29,7 @@ base64 = "0.22"
 regex = "1"
 lopdf = { version = "0.34", features = ["embed_image"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+futures = "0.3"
 
 # 减少符号导出以避免 "export ordinal too large" 错误
 [profile.release]

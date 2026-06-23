@@ -44,7 +44,7 @@ jobs:
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: InfoMagic-Windows-Build
+          name: InfoMagic-Builds
           # 核心配置：使用通配符精准匹配你生成的两个文件
           # 假设这两个文件输出在项目根目录，如果是 dist 目录，请改为 dist/InfoMagic*
           path: |

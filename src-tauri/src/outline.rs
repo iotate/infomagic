@@ -119,8 +119,8 @@ pub async fn generate_outline(
         min_pages, max_pages, topic
     );
 
-    // Log the start of generation
-    error_log::log_info(&cwd_path, &format!("Starting outline generation for topic: {}", topic));
+    // Log the start of generation (只记录动作，不记录具体内容)
+    error_log::log_info(&cwd_path, "Starting outline generation");
 
     // Call LLM API
     let client = reqwest::Client::new();

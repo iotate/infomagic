@@ -1,4 +1,4 @@
-# InfoMagic - AI 信息图表生成器
+# InfoMagic - AI 信息图表生成
 
 InfoMagic 是一款基于 AI 的信息图表生成工具，可以帮助用户制作一系列的专业的信息图表（当然也可以做成PPT）。
 
@@ -22,13 +22,13 @@ InfoMagic 是一款基于 AI 的信息图表生成工具，可以帮助用户制
 - **PNG 图像**：默认生成高清PNG图片
 - **PDF 导出**：一键导出高质量 PDF 文件，方便分享和演示
 
-## 自定义配置
+### 自定义配置
 
 - **大模型API**：自定义接入文生文和文生图大模型API
 - **模板**：自定义多个模板按需选用，包含封面、内容页、封底三张图片，生成的图片会参考模板布局
 - **风格**：自定义多个模板按需选用，描述配色、风格等要求
 
-## 联系作者
+### 联系作者
 
 GitHub: https://github.com/iotate/infomagic
 
@@ -126,18 +126,19 @@ npm run package
 | OpenAI | https://api.openai.com/v1/images/generations | gpt-image-2 |
 | Azure | https://your-resource.openai.azure.com | gpt-image-2 |
 | DashScope | https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis | wanx-v1 |
-| Replicate | https://api.replicate.com/v1/predictions | stability-ai/sdxl |
 | 自定义 | 用户自行填写 | 用户自行填写 |
 
 > **自定义供应商**：选择"自定义"选项后，可以填写任意兼容 OpenAI API 格式的端点和模型名称，支持更多第三方服务。
 
-## 技术栈
+## 开发指南
+
+### 技术栈
 
 - **前端**：Vue 3 + TypeScript + Ant Design Vue + Pinia + Vue Router
 - **后端**：Tauri 2.x + Rust
 - **构建**：Vite
 
-## 开发
+### 开发
 
 ```bash
 # 安装依赖
@@ -150,10 +151,10 @@ npm run tauri dev
 npm run build
 
 # 构建 Tauri 应用
-npm run tauri:build
+npm run package
 ```
 
-## 目录结构
+### 目录结构
 
 ```
 infomagic/
@@ -174,6 +175,6 @@ infomagic/
         └── ...
 ```
 
-## 许可证
+### 许可证
 
 MIT License

@@ -707,3 +707,100 @@ pub async fn open_project_folder(
     
     Ok(())
 }
+
+
+#[tauri::command]
+pub async fn delete_page(
+    cwd: State<'_, Arc<PathBuf>>,
+    project_name: String,
+    page_num: u32,
+) -> Result<(), String> {
+    let project_dir = get_project_dir(&cwd, &project_name);
+    
+    // Delete the page markdown file
+    let md_path = project_dir.join(format!("page-{:02}.md", page_num));
+    if md_path.exists() {
+        tokio::fs::remove_file(&md_path)
+            .await
+            .map_err(|e| format!("删除页面文件失败: {}", e))?;
+    }
+    
+    // Delete the corresponding image file if exists
+    let png_path = project_dir.join(format!("page-{:02}.png", page_num));
+    if png_path.exists() {
+        tokio::fs::remove_file(&png_path)
+            .await
+            .map_err(|e| format!("删除图片文件失败: {}", e))?;
+    }
+    
+    // Reorganize remaining pages
+    let mut entries = tokio::fs::read_dir(&project_dir)
+        .await
+        .map_err(|e| format!("读取项目目录失败: {}", e))?;
+    
+    let mut page_files: Vec<(u32, PathBuf)> = Vec::new();
+    
+    while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        
+        if file_name.starts_with("page-") && file_name.ends_with(".md") {
+            let num_str = file_name.trim_start_matches("page-").trim_end_matches(".md");
+            if let Ok(num) = num_str.parse::<u32>() {
+                if num != page_num {
+                    page_files.push((num, entry.path()));
+                }
+            }
+        }
+    }
+    
+    // Sort by page number
+    page_files.sort_by_key(|(num, _)| *num);
+    
+    // Rename files to sequential order
+    for (new_num, (old_num, old_path)) in page_files.iter().enumerate() {
+        let new_num = (new_num + 1) as u32;
+        
+        if *old_num != new_num {
+            // Rename markdown file
+            let new_md_path = project_dir.join(format!("page-{:02}.md", new_num));
+            tokio::fs::rename(old_path, &new_md_path)
+                .await
+                .map_err(|e| format!("重命名页面文件失败: {}", e))?;
+            
+            // Rename image file if exists
+            let old_png_path = project_dir.join(format!("page-{:02}.png", old_num));
+            if old_png_path.exists() {
+                let new_png_path = project_dir.join(format!("page-{:02}.png", new_num));
+                tokio::fs::rename(&old_png_path, &new_png_path)
+                    .await
+                    .map_err(|e| format!("重命名图片文件失败: {}", e))?;
+            }
+        }
+    }
+    
+    // Update project info
+    let project_json = project_dir.join("project.json");
+    if project_json.exists() {
+        let mut project: ProjectInfo = {
+            let content = tokio::fs::read_to_string(&project_json)
+                .await
+                .map_err(|e| format!("读取项目配置失败: {}", e))?;
+            serde_json::from_str(&content)
+                .map_err(|e| format!("解析项目配置失败: {}", e))?
+        };
+        
+        let (_, page_count, image_count) = scan_project_files(&project_dir);
+        project.page_count = page_count;
+        project.image_count = image_count;
+        project.updated_at = Utc::now();
+        
+        let content = serde_json::to_string_pretty(&project)
+            .map_err(|e| format!("序列化项目配置失败: {}", e))?;
+        
+        tokio::fs::write(&project_json, content)
+            .await
+            .map_err(|e| format!("写入项目配置失败: {}", e))?;
+    }
+    
+    Ok(())
+}

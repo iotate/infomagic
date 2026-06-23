@@ -1,7 +1,7 @@
 {
     "productName": "InfoMagic",
-    "version": "0.1.0",
-    "identifier": "com.infomagic.app",
+    "version": "0.2.0",
+    "identifier": "com.iotate.infomagic",
     "build": {
         "beforeDevCommand": "npm run dev",
         "devUrl": "http://localhost:1420",
@@ -11,7 +11,7 @@
     "app": {
         "windows": [
             {
-                "title": "InfoMagic - AI 信息图表生成器",
+                "title": "InfoMagic - AI 信息图表生成",
                 "width": 1200,
                 "height": 720,
                 "minWidth": 800,

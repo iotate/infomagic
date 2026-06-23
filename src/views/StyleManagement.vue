@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 
 interface StyleInfo {
   name: string
@@ -8,6 +9,55 @@ interface StyleInfo {
   content?: string
   colors?: string[]
 }
+
+// 默认风格模板
+const DEFAULT_STYLE_TEMPLATE = `# 风格名称
+
+简要描述这个风格的特点：
+
+## 风格锚点
+统一使用XX为主色调，XX作为强调色，保持XX的视觉风格
+
+## 配色
+- 主色：颜色名 (#RRGGBB)
+- 强调色：颜色名 (#RRGGBB)
+- 背景色：颜色名 (#RRGGBB)
+- 卡片色：颜色名 (#RRGGBB)
+- 文本色：颜色名 (#RRGGBB)
+- 辅助文本：颜色名 (#RRGGBB)
+
+## 背景基调
+描述背景的底色和层次感
+
+## 标题样式
+描述标题的字体、字重、层级
+
+## 卡片样式
+描述卡片的圆角、阴影、质感
+
+## 图标样式
+描述图标的风格和颜色
+
+## 线条样式
+描述连接线的风格
+
+## 禁止规则
+- 不要出现无关的公司名称、Logo 或文字
+- 不要使用干扰阅读的复杂背景
+- 不要让页面之间的视觉语言突然断裂
+`
+
+// 必需的风格结构字段
+const REQUIRED_SECTIONS = [
+  '风格锚点',
+  '配色',
+  '背景基调',
+  '标题样式',
+  '卡片样式',
+  '图标样式',
+  '线条样式',
+  '禁止规则'
+]
 
 const styles = ref<StyleInfo[]>([])
 const loading = ref(false)
@@ -18,6 +68,12 @@ const editingName = ref('')
 const editingContent = ref('')
 const isNewStyle = ref(false)
 const saving = ref(false)
+
+// 提取风格
+const extracting = ref(false)
+const showExtractModal = ref(false)
+const extractName = ref('')
+const extractFilePath = ref('')
 
 onMounted(async () => {
   await loadStyles()
@@ -67,8 +123,26 @@ function extractColors(content: string): string[] {
 async function createNewStyle() {
   isNewStyle.value = true
   editingName.value = ''
-  editingContent.value = '# 新风格\n\n描述这个风格的特点...\n\n## 配色方案\n- 主色：\n- 辅色：\n- 背景：\n\n## 设计要点\n- '
+  editingContent.value = DEFAULT_STYLE_TEMPLATE
   showEditor.value = true
+}
+
+// 验证风格结构
+function validateStyleContent(content: string): { valid: boolean; missing: string[] } {
+  const missing: string[] = []
+  
+  for (const section of REQUIRED_SECTIONS) {
+    // 检查是否存在 ## 风格锚点 这样的标题
+    const pattern = new RegExp(`^##\\s+${section}`, 'm')
+    if (!pattern.test(content)) {
+      missing.push(section)
+    }
+  }
+  
+  return {
+    valid: missing.length === 0,
+    missing
+  }
 }
 
 async function editStyle(style: StyleInfo) {
@@ -90,6 +164,17 @@ async function saveStyle() {
     return
   }
   
+  // 验证风格结构
+  const validation = validateStyleContent(editingContent.value)
+  if (!validation.valid) {
+    const confirm = window.confirm(
+      `风格结构不完整，缺少以下必填部分：\n\n${validation.missing.join('\n')}\n\n是否仍要保存？`
+    )
+    if (!confirm) {
+      return
+    }
+  }
+  
   saving.value = true
   try {
     await invoke('save_style', { 
@@ -103,6 +188,63 @@ async function saveStyle() {
     alert('保存失败：' + e)
   } finally {
     saving.value = false
+  }
+}
+
+// 打开文件选择器选择图片或PPTX
+async function openFileForExtract() {
+  const selected = await open({
+    multiple: false,
+    filters: [{
+      name: 'Images & PPTX',
+      extensions: ['png', 'jpg', 'jpeg', 'webp', 'pptx']
+    }]
+  })
+  
+  if (selected) {
+    extractFilePath.value = selected as string
+    // 从文件名提取风格名称
+    const fileName = extractFilePath.value.split(/[/\\]/).pop() || ''
+    extractName.value = fileName.replace(/\.(png|jpg|jpeg|webp|pptx)$/i, '')
+  }
+}
+
+// 提取风格
+async function extractStyle() {
+  if (!extractFilePath.value) {
+    alert('请先选择文件')
+    return
+  }
+  
+  if (!extractName.value.trim()) {
+    alert('请输入风格名称')
+    return
+  }
+  
+  extracting.value = true
+  
+  try {
+    const result = await invoke<string>('extract_style_from_file', {
+      filePath: extractFilePath.value,
+      styleName: extractName.value.trim()
+    })
+    
+    // 关闭提取弹窗，打开编辑弹窗
+    showExtractModal.value = false
+    
+    // 设置编辑弹窗内容
+    isNewStyle.value = true
+    editingName.value = extractName.value.trim()
+    editingContent.value = result
+    showEditor.value = true
+    
+    // 清空提取表单
+    extractFilePath.value = ''
+    extractName.value = ''
+  } catch (e) {
+    alert('提取风格失败：' + e)
+  } finally {
+    extracting.value = false
   }
 }
 
@@ -134,6 +276,14 @@ function cancelEdit() {
             </svg>
           </template>
           刷新
+        </a-button>
+        <a-button @click="showExtractModal = true">
+          <template #icon>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+            </svg>
+          </template>
+          提取风格
         </a-button>
         <a-button type="primary" @click="createNewStyle">
           <template #icon><span>+</span></template>
@@ -227,12 +377,54 @@ function cancelEdit() {
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- 提取风格弹窗 -->
+    <a-modal
+      v-model:open="showExtractModal"
+      title="从图片提取风格"
+      ok-text="提取"
+      cancel-text="取消"
+      :confirm-loading="extracting"
+      @ok="extractStyle"
+      @cancel="showExtractModal = false"
+      width="600px"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="风格名称" required>
+          <a-input
+            v-model:value="extractName"
+            placeholder="输入风格名称"
+          />
+        </a-form-item>
+        <a-form-item label="选择文件" required>
+          <a-input-group compact>
+            <a-input
+              v-model:value="extractFilePath"
+              placeholder="选择图片或PPTX文件"
+              style="width: calc(100% - 80px)"
+              readonly
+            />
+            <a-button @click="openFileForExtract">浏览</a-button>
+          </a-input-group>
+          <template #extra>
+            <span class="field-hint">支持 PNG、JPG、WEBP 格式</span>
+          </template>
+        </a-form-item>
+        <a-alert 
+          type="info" 
+          message="需要多模态模型" 
+          description="提取风格功能需要配置支持多模态的 LLM（如 GPT-5、Qwen 等）。如果模型不支持图片理解，提取将会失败。"
+          show-icon
+          style="margin-bottom: 16px"
+        />
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
 <style scoped>
 .style-management {
-  max-width: 1200px;
+  max-width: 1920px;
   margin: 0 auto;
   padding: 0 16px;
 }
