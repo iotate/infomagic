@@ -118,9 +118,9 @@ const projectId = route.params.id as string
 
 const selectedPage = computed(() => pages.value[selectedPageIndex.value] || null)
 
-// 监听选择变化，自动保存项目设置
+// 监听选择变化，自动保存项目设置（仅模板和尺寸，风格在大纲页面已设定）
 let saveSettingsTimer: ReturnType<typeof setTimeout> | null = null
-watch([selectedTemplate, selectedStyle, selectedSizeIndex], () => {
+watch([selectedTemplate, selectedSizeIndex], () => {
   // 延迟保存，避免频繁调用
   if (saveSettingsTimer) {
     clearTimeout(saveSettingsTimer)
@@ -227,13 +227,13 @@ async function loadPromptSize() {
   }
 }
 
-// 保存项目设置（模板、风格、尺寸）
+// 保存项目设置（仅模板和尺寸，风格在大纲页面已设定，此处不可修改）
 async function saveProjectSettings() {
   try {
     await invoke('update_project_settings', {
       name: projectId,
       template: selectedTemplate.value === 'none' ? null : selectedTemplate.value || null,
-      style: selectedStyle.value || null,
+      style: null, // 风格不在页面编辑页保存
       sizeIndex: selectedSizeIndex.value
     })
   } catch (e) {
@@ -254,9 +254,7 @@ async function loadTemplates() {
 async function loadStyles() {
   try {
     styles.value = await invoke<StyleInfo[]>('list_styles')
-    if (styles.value.length > 0 && !selectedStyle.value) {
-      selectedStyle.value = styles.value[0].name
-    }
+    // 风格从项目设置中加载，不设置默认值
   } catch (e) {
     console.error('加载风格失败', e)
     styles.value = []
@@ -626,9 +624,7 @@ function goBack() {
           <a-select-option v-for="t in templates" :key="t.name" :value="t.name">{{ t.name }}</a-select-option>
         </a-select>
         <span class="toolbar-label">风格</span>
-        <a-select v-model:value="selectedStyle" style="width: 140px" size="small" placeholder="选择风格">
-          <a-select-option v-for="s in styles" :key="s.name" :value="s.name">{{ s.name }}</a-select-option>
-        </a-select>
+        <span class="style-readonly">{{ selectedStyle || '未设置' }}</span>
         <span class="toolbar-label">尺寸</span>
         <a-select v-model:value="selectedSizeIndex" style="width: 100px" size="small" placeholder="选择尺寸">
           <a-select-option v-for="(size, index) in imageSizes" :key="index" :value="index">{{ size.name }}</a-select-option>
@@ -940,6 +936,17 @@ function goBack() {
 
 .info-item {
   color: var(--text-secondary);
+}
+
+.style-readonly {
+  padding: 2px 8px;
+  background: var(--bg-color);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 80px;
+  display: inline-block;
+  text-align: center;
 }
 
 .image-modal-overlay {

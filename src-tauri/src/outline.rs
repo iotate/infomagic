@@ -11,9 +11,6 @@ pub struct PageOutline {
     pub page_num: u32,
     pub title: String,
     pub content: String,
-    pub layout: String,
-    pub image_desc: String,
-    pub speaker_notes: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +48,7 @@ pub async fn generate_outline(
     topic: String,
     mode: String,
     expected_pages: Option<u32>,
+    style_name: Option<String>,
     config: ApiConfig,
 ) -> Result<String, String> {
     let cwd_path = cwd.inner().clone();
@@ -69,10 +67,27 @@ pub async fn generate_outline(
         outline_mode.page_range()
     };
     
+    // 读取风格内容
+    let style_content = if let Some(name) = &style_name {
+        let style_path = cwd.join("styles").join(format!("{}.md", name));
+        if style_path.exists() {
+            tokio::fs::read_to_string(&style_path).await.unwrap_or_default()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    
+    let style_section = if !style_content.is_empty() {
+        format!("\n风格要求：\n{}\n", style_content)
+    } else {
+        String::new()
+    };
+    
     let prompt = format!(
         r#"请为以下主题生成一个信息图表大纲，包含{}到{}页。
-
-主题：{}
+{}主题：{}
 
 请按以下格式输出（使用Markdown）：
 
@@ -83,40 +98,46 @@ pub async fn generate_outline(
 ## 第1页：封面
 
 **标题**: [主标题]
-**页面内容**: [副标题/日期/作者]
-**布局设计**: [布局描述]
-**配图设计**: [配图描述]
-**讲稿备注**: [讲稿内容]
+**页面内容**: 
+- 主体：[核心主题名称/Logo]
+- 场景：[使用场景、受众语境]
+- 核心信息：[副标题、日期、作者等补充信息]
+- 输出要求：[风格关键词，如：现代、简洁、专业]
 
 ---
 
 ## 第2页：[页面标题]
 
-**标题**: [标题]
-**页面内容**: [内容]
-**布局设计**: [布局描述]
-**配图设计**: [配图描述]
-**讲稿备注**: [讲稿内容]
+**标题**: [页面标题]
+**页面内容**: 
+- 主体：[本页核心主题]
+- 场景：[背景/语境]
+- 构图：[模块布局、层级关系、图形设计]
+- 文本：[必须显示的标题、标签、关键数据]
+- 细节：[图标、装饰元素、信息标注]
+- 核心约束：[3-5个模块、信息流方向]
 
 ---
 
-... (更多页面)
+... (更多页面，格式同第2页)
 
 ## 第N页：封底
 
 **标题**: 谢谢
-**页面内容**: [联系方式/二维码]
-**布局设计**: 居中布局
-**配图设计**: 简洁背景
-**讲稿备注**: 结束语
+**页面内容**: 
+- 主体：[致谢语/口号/品牌标识]
+- 联系方式：[电话/邮箱]
+- 输出要求：简洁、居中、留白充足
 
-请确保：
-1. 第一页是封面
-2. 最后一页是封底
-3. 内容页之间用 --- 分隔
-4. 每页都包含所有必需字段
+信息图设计原则：
+1. 每页内容控制在 3-8 个模块
+2. 使用色块、箭头、图标和留白控制复杂度
+3. 避免长段正文，用简洁短句呈现
+4. 数字信息要醒目
+5. 第一页是封面，最后一页是封底
+6. 内容页之间用 --- 分隔
 "#,
-        min_pages, max_pages, topic
+        min_pages, max_pages, style_section, topic
     );
 
     // Log the start of generation (只记录动作，不记录具体内容)
@@ -200,17 +221,11 @@ pub async fn parse_outline(content: String) -> Result<Vec<PageOutline>, String> 
         
         let title = extract_field(page_content, "标题");
         let content = extract_field(page_content, "页面内容");
-        let layout = extract_field(page_content, "布局设计");
-        let image_desc = extract_field(page_content, "配图设计");
-        let speaker_notes = extract_field(page_content, "讲稿备注");
         
         outlines.push(PageOutline {
             page_num,
             title,
             content,
-            layout,
-            image_desc,
-            speaker_notes,
         });
     }
     

@@ -579,9 +579,12 @@ fn build_image_prompt(
 ) -> String {
     let mut prompt_parts = Vec::new();
     
+    // 信息图生成提示
+    prompt_parts.push("请生成一张高质量的信息图（Infographic）\n".to_string());
+    
     // 如果有参考图，强化模板遵循要求
     if has_reference_images {
-        prompt_parts.push("【核心任务】这是一张模板图片，你需要在此基础上生成新的页面。".to_string());
+        prompt_parts.push("【核心任务】这是一张模板图片，你需要在此基础上生成新的信息图页面。".to_string());
         prompt_parts.push("".to_string());
         prompt_parts.push("【必须严格遵守】参考图片中的以下元素是模板固有元素，必须保持原样不变：".to_string());
         prompt_parts.push("1. 所有 Logo、品牌标识、商标 - 位置、大小、颜色完全不变".to_string());
@@ -590,46 +593,74 @@ fn build_image_prompt(
         prompt_parts.push("4. 页眉页脚、导航栏等固定区域 - 完全不变".to_string());
         prompt_parts.push("5. 整体配色方案 - 主色、辅色、背景色完全一致".to_string());
         prompt_parts.push("".to_string());
-        prompt_parts.push("【允许修改】只有内容区域的文字和数据可以更新。".to_string());
-        prompt_parts.push("".to_string());
     }
+    
+    // 信息图设计原则
+    prompt_parts.push("【信息图设计原则】".to_string());
+    prompt_parts.push("- 主体：明确核心主题，突出视觉焦点".to_string());
+    prompt_parts.push("- 场景：清晰的背景/语境，适合目标受众".to_string());
+    prompt_parts.push("- 构图：清晰的层级关系，主体位置突出".to_string());
+    prompt_parts.push("- 风格：现代、专业、易读".to_string());
+    prompt_parts.push("- 模块：控制在 3-5 个模块".to_string());
+    prompt_parts.push("- 信息流：用色块、箭头、图标和留白控制复杂度".to_string());
+    prompt_parts.push("- 文本：简洁短句，数字醒目".to_string());
+    prompt_parts.push("".to_string());
+    prompt_parts.push("【需要避免】".to_string());
+    prompt_parts.push("- 避免把长段正文塞进画面".to_string());
+    prompt_parts.push("- 避免过多装饰影响信息传达".to_string());
+    prompt_parts.push("- 避免字体过小或层次不清".to_string());
+    prompt_parts.push("".to_string());
     
     // 如果有风格指南，使用增强版提示词
     if let Some(guide) = style_guide {
         // 风格锚点
         if !guide.prompt_anchor.is_empty() {
-            prompt_parts.push(format!("风格基调：{}", guide.prompt_anchor));
+            prompt_parts.push(format!("【风格基调】{}", guide.prompt_anchor));
         }
         
         // 配色
         if !guide.style_core.palette.is_empty() {
-            prompt_parts.push(format!("配色方案：{}", guide.style_core.palette.join("、")));
+            prompt_parts.push(format!("【配色方案】{}", guide.style_core.palette.join("、")));
+        }
+        
+        // 背景基调
+        if !guide.style_core.background_tone.is_empty() {
+            prompt_parts.push(format!("【背景基调】{}", guide.style_core.background_tone));
+        }
+        
+        // 标题样式
+        if !guide.style_core.title_style.is_empty() {
+            prompt_parts.push(format!("【标题样式】{}", guide.style_core.title_style));
+        }
+        
+        // 卡片样式
+        if !guide.style_core.card_style.is_empty() {
+            prompt_parts.push(format!("【卡片样式】{}", guide.style_core.card_style));
+        }
+        
+        // 禁止规则
+        if !guide.negative_rules.is_empty() {
+            prompt_parts.push(format!("【禁止规则】{}", guide.negative_rules.join("；")));
         }
     } else if let Some(style) = style_content {
         // 向后兼容：使用原始风格 Markdown
-        prompt_parts.push(format!("风格要求：\n{}", style));
+        prompt_parts.push(format!("【风格要求】\n{}", style));
     }
+    
+    prompt_parts.push("".to_string());
     
     // 页面类型描述
     let page_type_desc = match page_type {
-        "front-cover" => "\n页面类型：封面页（保持封面标题区、副标题区、装饰元素的布局不变）",
-        "back-cover" => "\n页面类型：封底页（保持致谢区、联系方式区的布局不变）",
-        _ => "\n页面类型：内容页（保持内容区域的卡片布局、图表样式不变）",
+        "front-cover" => "【页面类型】封面页 - 包含主标题、副标题、日期/作者、装饰元素",
+        "back-cover" => "【页面类型】封底页 - 包含致谢、联系方式、简洁背景",
+        _ => "【页面类型】内容页 - 模块化卡片布局，信息清晰可读",
     };
     prompt_parts.push(page_type_desc.to_string());
-    
-    // 过滤掉讲稿备注行
-    let filtered_content: String = page_content
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.starts_with("**讲稿备注**") && !trimmed.starts_with("**讲稿**")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    prompt_parts.push("".to_string());
     
     // 页面内容
-    prompt_parts.push(format!("\n需要更新的内容：\n{}", filtered_content));
+    prompt_parts.push("【页面内容】".to_string());
+    prompt_parts.push(page_content.to_string());
     
     // 最终强调
     if has_reference_images {
