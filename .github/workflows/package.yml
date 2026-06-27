@@ -32,15 +32,21 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      # 4. 安装前端项目依赖
+      # 4. 缓存 Rust 依赖，加速构建
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      # 5. 安装前端项目依赖
       - name: Install frontend dependencies
         run: npm ci
 
-      # 5. 执行自定义打包脚本
+      # 6. 执行自定义打包脚本
       - name: Run Custom Package Script
         run: npm run package
 
-      # 6. 上传构建产物
+      # 7. 上传构建产物
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -52,7 +58,7 @@ jobs:
             output/InfoMagic_*.exe
           retention-days: 7
       
-      # 7. 自动创建 GitHub Release
+      # 8. 自动创建 GitHub Release
       - name: Create GitHub Release
         if: github.ref_type == 'tag' # 只有标签触发时执行
         uses: softprops/action-gh-release@v2

@@ -25,3 +25,6 @@ output
 *.njsproj
 *.sln
 *.sw?
+
+# 不忽略 Cargo.lock，确保 CI 构建一致性
+# Cargo.lock
