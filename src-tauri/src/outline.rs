@@ -79,15 +79,60 @@ pub async fn generate_outline(
         String::new()
     };
     
-    let style_section = if !style_content.is_empty() {
-        format!("\n风格要求：\n{}\n", style_content)
+    // 读取风格内容并提取关键信息
+    let (style_prompt, style_requirements) = if !style_content.is_empty() {
+        // 提取风格提示词部分
+        let style_prompt_section = if style_content.contains("## 风格提示词") {
+            let start = style_content.find("## 风格提示词").unwrap_or(0);
+            let end = style_content.find("## 核心要求").unwrap_or_else(|| style_content.find("## 适用").unwrap_or(style_content.len()));
+            style_content[start..end].replace("## 风格提示词", "").trim().to_string()
+        } else {
+            style_content.clone()
+        };
+        
+        // 构建每页必须包含的风格设计字段
+        let style_design_field = format!(
+            "\n**风格设计**: 全页统一遵循以下风格要求：\n{}\n", 
+            style_prompt_section
+        );
+        
+        (style_prompt_section, style_design_field)
+    } else {
+        (String::new(), String::new())
+    };
+    
+    // 构建风格要求说明
+    let style_instruction = if !style_prompt.is_empty() {
+        format!("\n【重要】风格一致性要求：
+所有页面必须严格遵循以下风格要求，不得偏离：
+{}
+
+每页的「风格设计」字段必须包含上述风格的具体应用说明。
+", style_prompt)
     } else {
         String::new()
     };
     
+    // 全局布局规范 - 会被写入每页内容
+    let layout_spec = r#"
+【全局布局规范 - 必须出现在每页内容中】
+每个页面的 markdown 必须包含以下布局规范字段：
+
+**布局设计**: 
+- Logo位置：左上角，高度为画面高度3%-5%
+- 页面标题：顶部区域，占画面高度8%-12%，字号24-32pt
+- 内容区域：中部区域，占画面高度70%-80%
+- 页码位置：右下角，字号12-14pt
+- 留白要求：四周留白不少于画面边缘5%
+- 模块间距：2%-4%画面高度
+"#;
+    
     let prompt = format!(
         r#"请为以下主题生成一个信息图表大纲，包含{}到{}页。
-{}主题：{}
+{}
+{}
+
+主题：{}
 
 请按以下格式输出（使用Markdown）：
 
@@ -102,7 +147,14 @@ pub async fn generate_outline(
 - 主体：[核心主题名称/Logo]
 - 场景：[使用场景、受众语境]
 - 核心信息：[副标题、日期、作者等补充信息]
-- 输出要求：[风格关键词，如：现代、简洁、专业]
+**布局设计**: 
+- Logo位置：左上角，高度为画面高度3%-5%
+- 主标题位置：画面中央，占画面面积40%-60%
+- 副标题位置：主标题下方，占画面高度10%-15%
+- 页码位置：右下角，字号12-14pt
+- 留白要求：四周留白不少于画面边缘5%
+**风格设计**: [本页风格关键词及具体应用]
+{}
 
 ---
 
@@ -116,6 +168,15 @@ pub async fn generate_outline(
 - 文本：[必须显示的标题、标签、关键数据]
 - 细节：[图标、装饰元素、信息标注]
 - 核心约束：[3-5个模块、信息流方向]
+**布局设计**: 
+- Logo位置：左上角，高度为画面高度3%-5%
+- 页面标题：顶部区域，占画面高度8%-12%，字号24-32pt
+- 内容区域：中部区域，占画面高度70%-80%，分为3-5个模块
+- 模块间距：2%-4%画面高度
+- 页码位置：右下角，字号12-14pt
+- 留白要求：四周留白不少于画面边缘5%
+**风格设计**: [本页风格关键词及具体应用]
+{}
 
 ---
 
@@ -127,7 +188,14 @@ pub async fn generate_outline(
 **页面内容**: 
 - 主体：[致谢语/口号/品牌标识]
 - 联系方式：[电话/邮箱]
-- 输出要求：简洁、居中、留白充足
+**布局设计**: 
+- Logo位置：左上角，高度为画面高度3%-5%
+- 致谢语位置：画面中央，占画面高度15%-20%
+- 联系方式位置：画面底部1/3区域，居中排列
+- 页码位置：右下角，字号12-14pt
+- 留白要求：四周留白不少于画面边缘10%
+**风格设计**: [本页风格关键词及具体应用]
+{}
 
 信息图设计原则：
 1. 每页内容控制在 3-8 个模块
@@ -136,8 +204,9 @@ pub async fn generate_outline(
 4. 数字信息要醒目
 5. 第一页是封面，最后一页是封底
 6. 内容页之间用 --- 分隔
+7. 所有页面必须严格遵循全局布局规范，固定元素位置和大小保持一致
 "#,
-        min_pages, max_pages, style_section, topic
+        min_pages, max_pages, style_instruction, layout_spec, topic, style_requirements, style_requirements, style_requirements
     );
 
     // Log the start of generation (只记录动作，不记录具体内容)

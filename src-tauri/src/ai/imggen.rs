@@ -595,6 +595,14 @@ fn build_image_prompt(
         prompt_parts.push("".to_string());
     }
     
+    // 从页面内容中提取布局设计
+    let layout_design = extract_section(page_content, "布局设计");
+    if !layout_design.is_empty() {
+        prompt_parts.push("【布局设计 - 必须严格遵守】".to_string());
+        prompt_parts.push(layout_design);
+        prompt_parts.push("".to_string());
+    }
+    
     // 信息图设计原则
     prompt_parts.push("【信息图设计原则】".to_string());
     prompt_parts.push("- 主体：明确核心主题，突出视觉焦点".to_string());
@@ -669,6 +677,41 @@ fn build_image_prompt(
     }
     
     prompt_parts.join("\n")
+}
+
+/// 从 markdown 内容中提取指定章节内容
+fn extract_section(content: &str, section_name: &str) -> String {
+    let section_marker = format!("**{}**", section_name);
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result = Vec::new();
+    let mut in_section = false;
+    
+    for line in &lines {
+        if line.starts_with(&section_marker) {
+            in_section = true;
+            // 提取同一行的内容（如果有）
+            if let Some(pos) = line.find(':') {
+                let rest = line[pos + 1..].trim();
+                if !rest.is_empty() {
+                    result.push(rest.to_string());
+                }
+            }
+            continue;
+        }
+        
+        if in_section {
+            // 遇到下一个章节标记，结束
+            if line.starts_with("**") && line.ends_with("**:") {
+                break;
+            }
+            // 收集列表项
+            if line.starts_with("- ") {
+                result.push(line.to_string());
+            }
+        }
+    }
+    
+    result.join("\n")
 }
 
 /// Generate image without template (text-to-image)
